@@ -1,0 +1,135 @@
+pipeline {
+    agent any
+    
+    tools {
+        jdk 'jdk17'
+        maven 'maven3'
+    }
+    environment {
+        SCANNER_HOME= tool 'sonar'
+        
+    }
+
+    stages {
+        stage('git-checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/athul826/Mission.git'
+            }
+        }
+        stage('trivy-scan'){
+            steps {
+                sh 'trivy fs --format table --output trivy-report.html .'
+            }
+        }
+        stage('maven-compile') { 
+            steps {
+                sh 'mvn compile'
+            }
+        }
+       stage('unit-test') {
+            steps { 
+                sh 'mvn test -DskipTests=true'
+            }
+        }
+        stage('sonar-scanner') {
+            steps {
+                withSonarQubeEnv('sonar-scanner') { 
+                     sh '''${SCANNER_HOME}/bin/sonar-scanner \
+                           -Dsonar.projectKey=boardGame \
+                           -Dsonar.java.binaries=target/classes'''
+                }
+            }
+        }
+        stage('sonar-quality-gate') {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-id'
+                }
+            }
+        }
+        stage('build the artifact') {
+            steps {
+                sh 'mvn package -DskipTests=true'
+            }
+        }
+        stage('push to nexus') {
+            steps {  
+                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: '', maven: '', mavenSettingsConfig: '', traceability: true) {
+                        sh "mvn deploy -DskipTests=true"
+                }
+                
+            }
+        }    
+        stage('build and tag docker image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker') {
+                        sh "docker build -t athult123/mission:latest ."
+                    }
+                }
+            }
+        }
+        stage('scan-docker-image') {
+            steps {
+                sh "trivy image --format table --output tiryvy-image.html  athult123/mission:latest"
+            }
+        }
+        stage('push image to docker hub') {
+            steps {
+                script { 
+                    withDockerRegistry(credentialsId: 'docker') {
+                        sh "docker push athult123/mission:latest"
+                    }
+                }
+            }
+        }
+        stage('deploy to k8s') {
+            steps {
+                withKubeConfig(caCertificate: '', clusterName: 'eks-athul-cluster', contextName: 'arn:aws:eks:us-east-2:605134438225:cluster/eks-athul-cluster', credentialsId: 'k8s-id', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://2DF5386BDB099F8E6AAC5F76658D9B66.yl4.us-east-2.eks.amazonaws.com') {
+                      sh "kubectl apply -f  deployment.yml"
+                      sleep 60
+                }
+            }
+        } 
+        stage('verify k8s') {
+            steps {
+                withKubeConfig(caCertificate: '', clusterName: 'eks-athul-cluster', contextName: 'arn:aws:eks:us-east-2:605134438225:cluster/eks-athul-cluster', credentialsId: 'k8s-id', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://2DF5386BDB099F8E6AAC5F76658D9B66.yl4.us-east-2.eks.amazonaws.com') {
+                      sh "kubectl get pods -n webapps "
+                      sh "kubectl get svc -n webapps"
+                }
+            }
+        }
+    }
+        post {
+        success {
+            emailext(
+                subject: "✅ Jenkins Build SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """<html>
+                    <body style="font-family:Arial,sans-serif;">
+                        <h2 style="color:green;">✅ Build SUCCESS</h2>
+                        <p>The build <strong>${env.JOB_NAME} #${env.BUILD_NUMBER}</strong> was successful.</p>
+                        <p><a href="${env.BUILD_URL}" style="color:blue;">Click here to view the build details</a></p>
+                    </body>
+                </html>""",
+                mimeType: 'text/html',
+                to: "athultharol1994@gmail.com"
+            )
+        }
+        failure {
+            emailext(
+                subject: "❌ Jenkins Build FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """<html>
+                    <body style="font-family:Arial,sans-serif;">
+                        <h2 style="color:red;">❌ Build FAILURE</h2>
+                        <p>The build <strong>${env.JOB_NAME} #${env.BUILD_NUMBER}</strong> failed.</p>
+                        <p>Please check the logs for more details.</p>
+                        <p><a href="${env.BUILD_URL}" style="color:blue;">Click here to view the build details</a></p>
+                    </body>
+                </html>""",
+                mimeType: 'text/html',
+                to: "athultharol1994@gmail.com"
+            )
+        }
+    }
+}
+
