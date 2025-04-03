@@ -1,1 +1,33 @@
 
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mission-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mission
+  template:
+    metadata:
+      labels:
+        app: mission
+    spec:
+      containers:
+        - name: mission-container
+          image: athult123/mission:latest
+          imagePullPolicy: Always  # Fixed typo
+          ports:
+            - containerPort: 8080  # Corrected indentation
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mission-service
+spec:
+  selector:
+    app: mission
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: NodePort
